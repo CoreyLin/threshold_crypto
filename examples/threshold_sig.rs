@@ -11,6 +11,8 @@ type Msg = String;
 // The database schema that validator nodes use to store messages they receive from users.
 // Messages are first indexed numerically by user ID then alphabetically by message. Each message
 // is mapped to its list of validator signatures.
+// 验证节点用来存储从用户接收到的消息的数据库schema。消息首先按用户ID进行数字索引，然后按消息的字母顺序进行索引。每个消息都映射到它的验证器签名列表。
+// 这里实际上就是map，键值对
 type MsgDatabase = BTreeMap<UserId, BTreeMap<Msg, Vec<NodeSignature>>>;
 
 // An append-only list of chat message "blocks". Each block contains the user ID for the user who
@@ -33,7 +35,7 @@ struct ChatNetwork {
     pk_set: PublicKeySet,
     // 网络中节点的集合
     nodes: Vec<Node>,
-    // 聊天日志
+    // 聊天日志，共识成功后才把聊天记录添加到这里
     chat_log: ChatLog,
     // user的id标志位，从0开始，每注册一个新user，这个值递增1
     n_users: usize,
@@ -85,6 +87,7 @@ impl ChatNetwork {
     }
 
     fn get_mut_node(&mut self, id: NodeId) -> &mut Node {
+        // Vec的get_mut方法根据索引的类型(参见get)返回一个元素或子切片的可变引用，如果索引越界则返回None。
         self.nodes
             .get_mut(id)
             .expect("No `Node` exists with that ID")
@@ -92,6 +95,7 @@ impl ChatNetwork {
 
     // Run a single round of the consensus algorithm. If consensus produced a new block, append
     // that block the chat log.
+    // 运行一轮共识算法。如果共识产生了一个新的区块，将该区块添加到聊天日志中。
     fn step(&mut self) {
         if let Some(block) = self.run_consensus() {
             self.chat_log.push(block);
@@ -101,25 +105,31 @@ impl ChatNetwork {
     // Our chat protocol's consensus algorithm. This algorithm produces a new block to append to the chat
     // log. Our consensus uses threshold-signing to verify a message has received enough
     // signature shares (i.e. has been signed by `threshold + 1` nodes).
+    // 我们的聊天协议的共识算法。该算法生成一个新区块以添加到聊天日志中。我们的共识是使用门限签名来验证一条消息已经收到了足够的签名shares(即已经由“阈值+ 1”个节点签名)。
     fn run_consensus(&self) -> Option<(UserId, Msg, Signature)> {
         // Create a new `MsgDatabase` of every message that has been signed by a validator node.
+        // 为验证节点签名的每个消息创建一个新的“MsgDatabase”。就是把所有节点的MsgDatabase的数据集合到一个大的MsgDatabase中
+        // MsgDatabase的定义为type MsgDatabase = BTreeMap<UserId, BTreeMap<Msg, Vec<NodeSignature>>>;
         let all_pending: MsgDatabase =
             self.nodes
                 .iter()
                 .fold(BTreeMap::new(), |mut all_pending, node| {
-                    for (user_id, signed_msgs) in &node.pending {
+                    for (user_id, signed_msgs) in &node.pending { // 对每个节点做循环
+                        // signed_msgs和user_msgs的类型都是BTreeMap<Msg, Vec<NodeSignature>>
                         let user_msgs = all_pending.entry(*user_id).or_insert_with(BTreeMap::new);
+                        //每条msg对应多个签名share，签名share组成一个Vec
                         for (msg, sigs) in signed_msgs.iter() {
                             let sigs = sigs.iter().cloned();
                             user_msgs
                                 .entry(msg.to_string())
                                 .or_insert_with(Vec::new)
-                                .extend(sigs);
+                                .extend(sigs); // Extends a collection with the contents of an iterator.
                         }
                     }
                     all_pending
                 });
 
+        // 该解读这里了
         // Iterate over the `MsgDatabase` numerically by user ID, then iterate over each user's
         // messages alphabetically. Try to combine the validator signatures. The first message to
         // receive `threshold + 1` node signatures produces a valid "combined" signature
@@ -158,6 +168,7 @@ struct Node {
     sk_share: SecretKeyShare,
     // 公钥份额
     pk_share: PublicKeyShare,
+    // 存储消息和其签名的数据库
     pending: MsgDatabase,
 }
 
@@ -173,11 +184,13 @@ impl Node {
 
     // Receives a message from a user, signs the message with the node's signing-key share,
     // then adds the signed message to its database of `pending` messages.
+    // 从一个用户那里接收一条消息，使用节点的签名私钥share对消息进行签名，然后将签名的消息添加到其`pending`消息数据库中。
     fn recv(&mut self, user_id: UserId, msg: Msg) {
         let sig = NodeSignature {
-            node_id: self.id,
-            sig: self.sk_share.sign(msg.as_bytes()),
+            node_id: self.id, // 节点id
+            sig: self.sk_share.sign(msg.as_bytes()), // 这是签名的关键方法
         };
+        // 往map中插入一条新数据
         self.pending
             .entry(user_id)
             .or_insert_with(BTreeMap::new)
@@ -206,6 +219,7 @@ impl User {
     }
 
     // Sends a message to one of the network's validator nodes.
+    // 将一条消息发送到网络的验证节点之一。
     fn send(&self, node: &mut Node, msg: Msg) {
         node.recv(self.id, msg);
     }
@@ -231,6 +245,7 @@ fn main() {
     // Alice's message has only one validator signature, it is not added to the chat log.
     // Alice将消息发送给一个验证者/节点。验证者对消息进行签名。在Alice将消息发送给第二个验证者之前，网络会进行一轮协商。因为Alice的消息只有一个验证者签名，所以它不会被添加到聊天日志中。
     alice.send(network.get_mut_node(node1), alice_greeting.clone());
+    // 运行一轮共识算法。如果共识产生了一个新的区块，将该区块添加到聊天日志中。
     network.step();
     assert!(network.chat_log.is_empty());
 
