@@ -98,7 +98,7 @@ impl ChatNetwork {
     // 运行一轮共识算法。如果共识产生了一个新的区块，将该区块添加到聊天日志中。
     fn step(&mut self) {
         if let Some(block) = self.run_consensus() {
-            self.chat_log.push(block);
+            self.chat_log.push(block); // chat_log的类型是Vec<(UserId, Msg, Signature)>
         }
     }
 
@@ -134,21 +134,27 @@ impl ChatNetwork {
         // messages alphabetically. Try to combine the validator signatures. The first message to
         // receive `threshold + 1` node signatures produces a valid "combined" signature
         // and is added to the chat log.
+        // 按用户ID以数字方式遍历“MsgDatabase”，然后按字母顺序遍历每个用户的消息。尝试组合验证节点的签名。第一个接收到“threshold + 1”个验证节点签名的消息生成一个有效的“组合”签名，并被添加到聊天日志中。
         for (user_id, signed_msgs) in &all_pending {
-            for (msg, sigs) in signed_msgs.iter() {
-                let sigs = sigs.iter().filter_map(|node_sig| {
+            for (msg, sigs) in signed_msgs.iter() { // 每个msg对应多个验证节点的签名
+                let sigs = sigs.iter().filter_map(|node_sig| { // 对一条消息的每个节点签名进行遍历
                     let node_sig_is_valid = self
-                        .get_node(node_sig.node_id)
-                        .pk_share
-                        .verify(&node_sig.sig, msg.as_bytes());
+                        .get_node(node_sig.node_id) // 获取节点id
+                        .pk_share // 节点的公钥份额
+                        .verify(&node_sig.sig, msg.as_bytes()); // 用节点的公钥份额对该节点的签名份额进行验证，这里还只涉及单个的节点，如果验证成功，node_sig_is_valid为true。这一步非常关键
 
-                    if node_sig_is_valid {
+                    if node_sig_is_valid { // 单个节点验证成功
                         Some((node_sig.node_id, &node_sig.sig))
                     } else {
                         None
                     }
                 });
 
+                // pk_set就是公钥set，即节点的公钥集合
+                // 之前步骤生成的sigs的类型是IntoIterator<Item = (T, &'a SignatureShare)>，包含多个节点的节点id和签名
+                // combine_signatures方法将share组合成一个可以用主公钥验证的签名。这些share的有效性不会被检查:如果其中一个是无效的，那么产生的签名也是无效的。
+                // 只返回一个错误，如果有一个重复的索引或太少的share。签名share的有效性应事先检查（已检查），结果的有效性应事后检查。
+                // 这一步非常关键。
                 if let Ok(sig) = self.pk_set.combine_signatures(sigs) {
                     return Some((*user_id, msg.clone(), sig));
                 }
@@ -168,16 +174,16 @@ struct Node {
     sk_share: SecretKeyShare,
     // 公钥份额
     pk_share: PublicKeyShare,
-    // 存储消息和其签名的数据库
+    // 存储消息和其签名的数据库，类型为BTreeMap<UserId, BTreeMap<Msg, Vec<NodeSignature>>>
     pending: MsgDatabase,
 }
 
 impl Node {
     fn new(id: NodeId, sk_share: SecretKeyShare, pk_share: PublicKeyShare) -> Self {
         Node {
-            id,
-            sk_share,
-            pk_share,
+            id, // 节点id
+            sk_share, // 节点私钥share
+            pk_share, // 节点公钥share
             pending: BTreeMap::new(),
         }
     }
@@ -247,13 +253,15 @@ fn main() {
     alice.send(network.get_mut_node(node1), alice_greeting.clone());
     // 运行一轮共识算法。如果共识产生了一个新的区块，将该区块添加到聊天日志中。
     network.step();
+    // 由于目前只有一个验证节点对消息进行了签名，所以用主公钥验签失败，消息不会被添加到chat_log中，chat_log为空
     assert!(network.chat_log.is_empty());
 
     // Alice sends her message to a second validator. The validator signs the message. Alice's
     // message now has two signatures (which is `threshold + 1` signatures). The network runs a
     // round of consensus, which successfully creates a combined-signature for Alice's message.
     // Alice's message is appended to the chat log.
+    // Alice将她的消息发送给第二个验证节点。验证节点对消息进行签名。Alice的消息现在有两个签名(即“threshold + 1”个签名)。网络运行一轮协商，成功地为Alice的消息创建一个联合签名。Alice的消息被成功添加到聊天日志中。
     alice.send(network.get_mut_node(node2), alice_greeting);
-    network.step();
-    assert_eq!(network.chat_log.len(), 1);
+    network.step(); //第二轮协商，生成消息的联合签名
+    assert_eq!(network.chat_log.len(), 1); // 既然生成了消息的联合签名，那么消息被成功添加到chat_log
 }
