@@ -54,7 +54,7 @@ impl ChatNetwork {
         let mut rng = rand::thread_rng();
         // 根据成员阈值数量生成私钥set
         let sk_set = SecretKeySet::random(threshold, &mut rng);
-        // 根据私钥set生成公钥set
+        // 根据私钥set生成公钥set，最后会用这个公钥set对联合签名进行验签，可以把公钥set就理解为主公钥。
         let pk_set = sk_set.public_keys();
 
         // 把私钥set和公钥set的份额分配给每一个成员/节点，并生成成员/节点集合
@@ -154,7 +154,7 @@ impl ChatNetwork {
                 // 之前步骤生成的sigs的类型是IntoIterator<Item = (T, &'a SignatureShare)>，包含多个节点的节点id和签名
                 // combine_signatures方法将share组合成一个可以用主公钥验证的签名。这些share的有效性不会被检查:如果其中一个是无效的，那么产生的签名也是无效的。
                 // 只返回一个错误，如果有一个重复的索引或太少的share。签名share的有效性应事先检查（已检查），结果的有效性应事后检查。
-                // 这一步非常关键。
+                // 这一步非常关键，这一步其实就是最后的主公钥对联合签名进行验签。
                 if let Ok(sig) = self.pk_set.combine_signatures(sigs) {
                     return Some((*user_id, msg.clone(), sig));
                 }
