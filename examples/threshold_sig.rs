@@ -52,7 +52,7 @@ impl ChatNetwork {
     fn new(n_nodes: usize, threshold: usize) -> Self {
         // thread_rng模式产生随机数
         let mut rng = rand::thread_rng();
-        // 根据成员阈值数量生成私钥set
+        // 根据成员阈值数量生成私钥set，这里有一个细节很关键：生成私钥set只需要阈值，不需要参与方的总数量
         let sk_set = SecretKeySet::random(threshold, &mut rng);
         // 根据私钥set生成公钥set，最后会用这个公钥set对联合签名进行验签，可以把公钥set就理解为主公钥。
         let pk_set = sk_set.public_keys();
